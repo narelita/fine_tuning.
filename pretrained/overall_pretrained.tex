@@ -1,0 +1,134 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[scaled=0.9]{DejaVuSansMono}
+\usepackage{inconsolata}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+
+% --- Listings setup for Python and Bash ---
+\definecolor{codegray}{RGB}{248,248,248}
+\definecolor{keyword}{RGB}{0,0,160}
+\definecolor{string}{RGB}{0,128,0}
+\definecolor{comment}{RGB}{120,120,120}
+
+\lstdefinestyle{code}{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keyword}\bfseries,
+  stringstyle=\color{string},
+  commentstyle=\color{comment}\itshape,
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{black},
+  breaklines=true,
+  tabsize=2,
+  upquote=true
+}
+
+\lstdefinelanguage{bash}{
+  morekeywords={pip,python,python3,cd,mkdir,ls,echo},
+  sensitive=false,
+  morecomment=[l]{\#}
+}
+
+\title{Applying a Pretrained Image Classifier in PyTorch: Steps \& Minimal Script}
+\author{Nareli}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Overview}
+This note shows the practical steps to run inference with a pretrained image classification model using \textbf{PyTorch} and \texttt{torchvision}. It ends with a compact, copy\,-\,pasteable script that prints the Top-5 predictions for a single image.
+
+\section*{Prerequisites}
+\begin{itemize}[leftmargin=1.3em]
+  \item Python 3.9+ recommended.
+  \item Packages: \texttt{torch}, \texttt{torchvision}, \texttt{Pillow}.
+\end{itemize}
+
+\noindent\textbf{Install:}
+\begin{lstlisting}[language=bash,style=code]
+pip install torch torchvision pillow
+\end{lstlisting}
+
+\section*{Steps (PyTorch)}
+\begin{enumerate}[leftmargin=1.3em]
+  \item \textbf{Choose a pretrained backbone.} e.g., ResNet-50, EfficientNet, ViT from \texttt{torchvision.models}.
+  \item \textbf{Load pretrained weights.} Use the \emph{weights enum} so preprocessing and categories match the model.
+  \item \textbf{Switch to eval mode.} \verb|model.eval()| to disable dropout and BN updates.
+  \item \textbf{Build the preprocessing pipeline.} Use \verb|weights.transforms()| (resize, crop, normalize).
+  \item \textbf{Load an image.} Open with PIL (\verb|convert("RGB")|).
+  \item \textbf{Preprocess and add batch dim.} Transform to tensor, then \verb|unsqueeze(0)|.
+  \item \textbf{Pick device.} \verb|cuda| if available, else \verb|cpu|; move model and batch there.
+  \item \textbf{Forward pass without gradients.} Wrap in \verb|torch.no_grad()| and obtain logits.
+  \item \textbf{Postprocess.} Softmax to probabilities; \verb|topk| for top-N; map indices to class names.
+  \item \textbf{(Optional) Batch inference.} Use a \verb|Dataset| + \verb|DataLoader| for throughput.
+  \item \textbf{(Optional) Custom labels.} If you fine-tuned a head, replace the default ImageNet label list.
+  \item \textbf{(Optional) Export/serve.} TorchScript/ONNX; wrap in CLI or an API (e.g., FastAPI) for deployment.
+\end{enumerate}
+
+\section*{Minimal Working Example (Single Image, Top-5)}
+Save as \texttt{classify.py} and run \verb|python classify.py path/to/image.jpg|.
+
+\begin{lstlisting}[language=Python,style=code]
+import sys
+import torch
+from torchvision import models
+from PIL import Image
+
+def main(image_path: str):
+    # 1) Pick model + weights
+    weights = models.ResNet50_Weights.IMAGENET1K_V2
+    model = models.resnet50(weights=weights)
+
+    # 2) Eval mode + device
+    model.eval()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+
+    # 3) Preprocessing bound to the chosen weights
+    preprocess = weights.transforms()
+
+    # 4) Load & preprocess image
+    img = Image.open(image_path).convert("RGB")
+    batch = preprocess(img).unsqueeze(0).to(device)
+
+    # 5) Inference (no gradients)
+    with torch.no_grad():
+        logits = model(batch)
+
+    # 6) Softmax + top-k
+    probs = torch.softmax(logits[0], dim=0)
+    top_probs, top_idxs = probs.topk(5)
+
+    # 7) Human-readable labels (ImageNet)
+    categories = weights.meta["categories"]
+
+    print("Top-5 predictions:")
+    for p, i in zip(top_probs.tolist(), top_idxs.tolist()):
+        print(f"{categories[i]:<30}  {p:.4f}")
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: python classify.py <image_path>")
+        sys.exit(1)
+    main(sys.argv[1])
+\end{lstlisting}
+
+\section*{Notes \& Tweaks}
+\begin{itemize}[leftmargin=1.3em]
+  \item \textbf{Different model?} Swap \verb|resnet50| for \verb|efficientnet_b3|, \verb|vit_b_16|, etc., and adjust the weights enum accordingly.
+  \item \textbf{Speed.} For many images, use batches (e.g., 32) and \verb|DataLoader| with \verb|num_workers|.
+  \item \textbf{Determinism.} Set seeds and \verb|torch.backends.cudnn.deterministic = True| if needed.
+  \item \textbf{Export.} Consider \verb|torch.jit.script(model)| or \verb|torch.onnx.export(...)| for deployment to other runtimes.
+\end{itemize}
+
+\end{document}
